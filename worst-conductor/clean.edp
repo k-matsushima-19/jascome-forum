@@ -1,0 +1,62 @@
+// Tested on FreeFem++ v4.12
+
+int nn = 150; // fineness of the mesh
+real alpha = 5e-4; 
+real eps = 0.04;
+real lambda = 1.4;
+
+real rhomin = 1e-2;
+real rhomax = 1;
+
+int MaxStep = 2000;
+
+func f = 1.0; 
+
+macro kappa(x,y) ( rho(x,y)^3 ) //
+macro kappaD(x,y) ( 3*rho(x,y)^2 ) //
+
+mesh Th = square(nn,nn, flags=1);
+fespace Vh(Th,P1);
+Vh rho = 1;
+
+ofstream ff("output/history.dat");
+for(int step=0; step<MaxStep; step++){
+    cout << "# step: " << step << endl;
+
+    // Plot and output kappa
+    {
+        Vh tmp = kappa(x,y);
+        plot(tmp,fill=true,value=true,cmm="kappa, step: "+step);
+    }
+    
+
+    // Compute temperature field u
+    Vh u, v;
+    solve primal(u,v) = 
+        int2d(Th)(rho(x,y)^3*(dx(u)*dx(v)+dy(u)*dy(v)))
+      - int2d(Th)(f*v) + on(1,2,3,4,u=0);
+    
+
+    // Compute gradient of j
+    Vh grad, w;
+    solve ComputeGrad(grad,w) = 
+          int2d(Th)(alpha*(dx(grad)*dx(w)+dy(grad)*dy(w)) + grad*w)
+        + int2d(Th)((3*rho(x,y)^2*(dx(u)*dx(u)+dy(u)*dy(u)) - lambda )*w);
+
+    // Output objective function, volume, and norm of the gradient
+    real obj;
+    {
+        Vh w = abs(grad);
+        real norm = sqrt(int2d(Th)(alpha*(dx(grad)*dx(grad)+dy(grad)*dy(grad)) + grad*grad)); // w[].max;
+        obj = int2d(Th)(f*u) + lambda*int2d(Th)(rho(x,y));
+        ff << step << " " << obj << " " << int2d(Th)(rho(x,y)) << " " << norm << "\n";
+        ff.flush;
+
+        grad = grad / norm;
+    }
+
+    rho = rho - eps*grad;
+    rho = max(rho,rhomin);
+    rho = min(rho,rhomax);
+    
+}

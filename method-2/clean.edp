@@ -1,0 +1,18 @@
+real eps = 1e-3;
+real alpha = 1e-3;
+
+mesh Th = square(80,80);
+fespace Vh(Th,P1);
+func f = 1000*(x^2+y^2 < 0.2^2);
+
+Vh u = 0;
+Vh v, uNew;
+for(int i=0; i<1000; i++){
+    solve Compute(uNew,v) = 
+          int2d(Th)(uNew*v + alpha*(dx(uNew)*dx(v)+dy(uNew)*dy(v)))
+        - int2d(Th)(   u*v + alpha*(dx(   u)*dx(v)+dy(   u)*dy(v)))
+        + int2d(Th)(eps*(dx(u)*dx(v)+dy(u)*dy(v))) 
+        - int2d(Th)(eps*f*v) + on(1,2,3,4,uNew=0);
+    u = uNew;
+}
+

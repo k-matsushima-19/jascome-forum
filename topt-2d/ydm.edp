@@ -1,0 +1,160 @@
+//	_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/
+//	_/ (c) 2020 Takayuki YAMADA								_/
+//	_/ All right reserved									_/
+//	_/ 														_/
+//	_/ Department of Strategic Studies,						_/
+//	_/ Institute of Engineering Innovation,					_/
+//	_/ School of Engineering								_/
+//	_/ The University of Tokyo								_/
+//	_/ Yayoi 2-11-16, Bunkyo-ku, Tokyo 113-8656, Japan		_/
+//	_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/
+// Run Command:
+// $ FreeFem++ 2Delastic-geom.edp
+//-----------------------------------------------------------
+//  Initial setting
+//-----------------------------------------------------------
+load "iovtk"   // use vtk file for paraview
+ofstream f("./SaveData/history.dat");
+//-----------------------------------------------------------
+//  parameters
+//-----------------------------------------------------------
+// Solid Mechanics
+real E;			E 			= 210e9;					// Young's modulus
+real nu; 		nu 			= 0.31;						// Poisson's ratio
+real lambda;	lambda 		= E*nu/(1+nu)/(1-2.*nu);	// Lame coefficient
+real mu; 		mu 			= E/(2*(1+nu));				// Lame coefficient
+int nn = 80;                          //resolution of mesh
+// Optimization
+int Maxloop = 200;   //max number of iteration for the optimization
+real dt = 0.2;			 //fictitious time step to update rho
+real Volcoef = 0.5;  //for volume constraint
+real lamG = 0.1;     //for volume constraint
+real sigG = 0.03;    //for volume constraint
+real rhomin = 0.001; //min value of rho
+real rhomax = 1.0;	 //max value of rho
+real regR   = 0.04; //regularization parameter
+//-----------------------------------------------------------
+//  geometry
+//-----------------------------------------------------------
+border bdN1(t=0,1)	{ x=0.0+(2.0-0.0)*t;   y=0.0;   label=1; };//bottom
+border bdN2(t=0,1)	{ x=2.0;   y=0.0+((0.5-0.06)-0.0)*t;   label=2; };//right-bottom
+border bdN3(t=0,1)	{ x=2.0;   y=(0.5-0.06)+((0.5+0.06)-(0.5-0.06))*t;   label=3; };//right-middle
+border bdN4(t=0,1)	{ x=2.0;   y=(0.5+0.06)+(1.0-(0.5+0.06))*t;   label=4; };//right-upper
+border bdN5(t=0,1)	{ x=2.0+(0.0-2.0)*t;   y=1.0;   label=5; };//upper
+border bdN6(t=0,1)	{ x=0.0;   y=1.0+(0.0-1.0)*t;   label=6; };//upper
+border bdC(t=0,2*pi){ x=0.1*cos(t)+0.5; y=0.1*sin(t)+0.5;   label=10; };
+mesh Sh = buildmesh( bdN1(nn)  + bdN2(nn/2) + bdN3(nn/4) + bdN4(nn/2)+ bdN5(nn) + bdN6(nn),fixedborder=1);//without hole
+//mesh Sh = buildmesh( bdN1(nn)  + bdN2(nn/2) + bdN3(nn/4) + bdN4(nn/2)+ bdN5(nn) + bdN6(nn) + bdC(-nn/2),fixedborder=1);//with hole
+plot(Sh,wait=0);
+savemesh(Sh,"./mesh/Sh.mesh");//check geometry by Gmsh
+
+
+//-----------------------------------------------------------
+//  Define functional space
+//-----------------------------------------------------------
+fespace VhV2(Sh,[P2,P2]);		// 2nd order elements
+fespace VhV1(Sh,[P1,P1]);		// first order elements
+fespace VhS1(Sh,P1);        // mises stress, rho
+fespace VhS0(Sh,P0);        //
+//-----------------------------------------------------------
+//  initialize rho
+//-----------------------------------------------------------
+macro frho(rho) (rho^3) //EOM
+macro dfdrho(rho) (3*rho^2) //EOM
+
+VhS1 rho = 1.0;// initial configuration
+real VolFDD = int2d(Sh)(1.0); // volume (area in 2D) of design domain
+real VolMax = Volcoef*VolFDD; // maximum value of volume Vmax
+//-----------------------------------------------------------
+//  Define Solid Mechanics
+//-----------------------------------------------------------
+macro u [u1,u2] 	//	displacement vector
+macro v [v1,v2] 	//	test function for displacement
+macro e(u) [dx(u[0]),dy(u[1]),(dx(u[1])+dy(u[0]))] // strain tensor
+macro D [[2.*mu+lambda,lambda,0],[lambda,2.*mu+lambda,0],[0,0,2.*mu]] //elastic tensor
+macro g [0,-1.0] 				// traction vector
+//Mises stress (plane strain)
+macro S11(u) ( ((2.*mu+lambda)*dx(u[0])+lambda*dy(u[1]))*frho(rho)   ) //EOM
+macro S22(u) ( ((2.*mu+lambda)*dy(u[1])+lambda*dx(u[0]))*frho(rho)   ) //EOM
+macro S33(u) ( lambda*(dx(u[0])+dy(u[1]))*frho(rho)   ) //EOM
+macro S12(u) ( mu*( dx(u[1])+dy(u[0])  )*frho(rho)   ) //EOM
+macro S13(u) ( 0 ) //EOM
+macro S23(u) ( 0 ) //EOM
+// sensitivity
+macro sens(u) ( (dfdrho(rho)*D*e(u))'*e(u) )  // EOM
+// define u and v in finite element space
+VhV2 	u,v;
+
+// define governing equation
+problem gov(u,v)
+		=int1d(Sh,3)(g'*v)				// 	traction
+		-int2d(Sh,0)((frho(rho)*D*e(u))'*e(v))	//	for domain 0
+		+ on(6,u1=0,u2=0)				// fixed on the boundary
+		;
+
+//-----------------------------------------------------------
+//  Define filtering equation
+//-----------------------------------------------------------
+VhS1 rhoreg,trho;
+problem reg(rhoreg,trho)
+	=int2d(Sh)(regR^2*(dx(rhoreg)*dx(trho)+dy(rhoreg)*dy(trho)) + rhoreg * trho)
+	-int2d(Sh)(rho * trho);
+
+//-----------------------------------------------------------
+//  Optimization loop
+//-----------------------------------------------------------
+
+
+for (int iter = 0; iter<Maxloop ; iter ++){
+	//-----------------------------------------------------------
+	//  Solve Problem
+	//-----------------------------------------------------------
+	gov;
+
+	//-----------------------------------------------------------
+	// Estimate objective and constraint functionals
+	//-----------------------------------------------------------
+	real comp = int1d(Sh,3)(g'*u);//compliance
+	cout << "compliance = " << comp <<endl;
+	real Vol  = int2d(Sh)(rho);
+	real Gvol =  (Vol - VolMax)/VolMax; // normalized constraint function
+	VhS1 mises = sqrt( 0.5*( (S11(u)-S22(u))^2 + (S22(u)-S33(u))^2 +(S33(u)-S11(u))^2 + 6*(S12(u)^2+S23(u)^2+S13(u)^2) ) ); //mises stress
+	//plot(mises,fill=true,value=true,wait=1);
+	plot(rho,fill=true,value=true,wait=0,cmm = "rho");
+	//-----------------------------------------------------------
+	// Save VTK and export data
+	//-----------------------------------------------------------
+	{
+		int[int] order = [1,1,1];
+		savevtk("./SaveVTK/Data"+iter+".vtu",Sh,[u[0],u[1],0],mises,rho,order = order, dataname="Displasement mises rho");
+	}
+	//-----------------------------------------------------------
+	//  Add log file
+	//-----------------------------------------------------------
+	{
+		ofstream f("./SaveData/history.dat",append);
+		f << iter << " " << comp << " " << Vol<< " " << Gvol << " " << lamG << "\n";
+	}
+
+	//-----------------------------------------------------------
+	//  Solve Adjoint problem
+	//-----------------------------------------------------------
+		// (not used in this program thanks to v = u)
+	//-----------------------------------------------------------
+	//  Update Lagrange multiplier
+	//-----------------------------------------------------------
+	lamG = fmax(lamG+sigG*Gvol,0);
+	cout <<" vol = " << Vol <<" lamG = " << lamG << endl;
+	//-----------------------------------------------------------
+	//  Update design variable (rho)
+	//-----------------------------------------------------------
+	real AvTd1 = int2d(Sh)(abs( sens(u) ))/VolFDD; //for normalization of sensitivity
+	rho = rho + dt * ( sens(u)/AvTd1 - lamG  );
+	//-----------------------------------------------------------
+	//  Regularization for design variable (rho)
+	//-----------------------------------------------------------
+	//reg;
+	//rho = rhoreg;
+	rho = max(rho,rhomin);
+	rho = min(rho,rhomax);
+}

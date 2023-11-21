@@ -1,0 +1,21 @@
+mesh Th = square(80,80);
+
+real kappa1 = 1;
+real kappa2 = 0.1;
+real alpha = 40;
+
+real rhomin = 1e-2;
+real rhomax = 1;
+
+fespace Vh(Th,P1);
+Vh rho = 4*(x-0.5)^2 + 4*(y-0.5)^2;
+rho = max(rho,rhomin);
+rho = min(rho,rhomax);
+plot(rho,fill=true,value=true,wait=true);
+
+// macro kappa(x,y) ( kappa1*(tanh(alpha*(rho(x,y)-0.5)) + 1) / 2 + kappa2 ) //
+macro kappa(x,y) ( rho(x,y)^3 ) // 
+
+Vh k = kappa(x,y);
+
+plot(k,fill=true,value=true,wait=true);

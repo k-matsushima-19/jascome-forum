@@ -1,0 +1,113 @@
+// Tested on FreeFem++ v4.12
+load "iovtk"
+// load "PARDISO"
+
+//------------
+// Parameters
+//------------
+int nn = 150; // fineness of the mesh
+real kappa1 = 1.0;
+real kappa2 = 0.01;
+real alpha = 120; //60; //80; 
+real c = 5e-4; 
+real eps = 0.04; //1e-1;
+real lambda = 1.4; //1.4; //1.2; //1.0; //0.16; 
+real ThresConvergence = 0.045;
+real L = 1.0;
+real H = 0.5;
+real delta = 0.055;
+macro g [0,-1.0] // traction vector
+bool symm = false;
+
+real rhomin = 1e-2;
+real rhomax = 1;
+
+func f = 1.0; 
+// macro kappa(x,y) ( kappa1*(tanh(alpha*(rho(x,y)-0.5)) + 1) / 2 + kappa2 ) //
+// macro kappaD(x,y) ( kappa1*alpha / (2*cosh(alpha*(rho(x,y)-0.5))^2) ) //
+
+macro kappa(x,y) ( rho(x,y)^3 ) //
+macro kappaD(x,y) ( 3*rho(x,y)^2 ) //
+
+//----------
+// Geometry
+//----------
+mesh Th;
+{
+    Th = square(nn,nn, flags=1);
+    plot(Th,wait=true);
+
+    savemesh(Th,"output/Th.mesh");
+
+}
+
+fespace Vh(Th,P1);
+
+//---------------
+// Initial rho
+//---------------
+Vh rho = 1;
+
+//-----------
+// Iteration
+//-----------
+ofstream ff("output/history.dat");
+for(int step=0; step<2000; step++){
+    cout << "# step: " << step << endl;
+
+    // Plot and output kappa
+    {
+        Vh tmp = kappa(x,y);
+        plot(tmp,fill=true,value=true,cmm="kappa, step: "+step);
+
+        int[int] order = [1,1];
+        savevtk("output/result_"+step+".vtu", Th, tmp, rho, order=order, dataname="kappa rho");
+    }
+    
+
+    // Compute temperature field u
+    Vh u;
+    {
+        Vh v;
+        solve primal(u,v) = int2d(Th)(kappa(x,y)*(dx(u)*dx(v)+dy(u)*dy(v))) - int2d(Th)(f*v) + on(1,2,3,4,u=0);
+		;
+    }
+
+    // Compute gradient of j
+    Vh grad;
+    {
+        Vh w;
+        solve ComputeGrad(grad,w) = int2d(Th)(c*(dx(grad)*dx(w)+dy(grad)*dy(w)) + grad*w)
+        + int2d(Th)((kappaD(x,y)*(dx(u)*dx(u)+dy(u)*dy(u)) - lambda )*w);
+        // + int2d(Th)(((kappaD(x,y)*D*e(u))'*e(u) - lambda )*w);
+        //(dfdrho(rho)*D*e(u))'*e(u)
+    }
+
+    // Output objective function, volume, and norm of the gradient
+    real obj;
+    {
+        Vh w = abs(grad);
+        real norm = sqrt(int2d(Th)(c*(dx(grad)*dx(grad)+dy(grad)*dy(grad)) + grad*grad)); // w[].max;
+        obj = int2d(Th)(f*u) + lambda*int2d(Th)(rho(x,y));
+        ff << step << " " << obj << " " << int2d(Th)(rho(x,y)) << " " << norm << "\n";
+        ff.flush;
+
+        grad = grad / norm;
+
+        // Convergence check
+        // if(norm < ThresConvergence) exit(0);
+    }
+
+    //------------
+    // Update rho
+    //------------
+
+    // Check the step size is approp.
+    rho = rho - eps*grad;
+    rho = max(rho,rhomin);
+    rho = min(rho,rhomax);
+
+    if(symm) rho = (rho(x,y) + rho(x,-y))/2;
+
+    
+}

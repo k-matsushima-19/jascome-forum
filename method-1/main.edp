@@ -1,0 +1,25 @@
+real eps = 1e-3;
+real alpha = 1e-3;
+
+mesh Th = square(80,80);
+
+fespace Vh(Th,P1);
+
+func f = 1000*(x^2+y^2 < 0.2^2);
+
+Vh u = 0;
+plot(u,fill=true,value=true,cmm=0,wait=true);
+for(int i=0; i<1000; i++){
+    plot(u,fill=true,value=true,cmm=i);
+
+    // Compute the gradient of F
+    Vh grad;
+    {
+        Vh v;
+        solve ComputeGrad(grad,v) = 
+              int2d(Th)(grad*v + alpha*(dx(grad)*dx(v)+dy(grad)*dy(v)))
+            - int2d(Th)(dx(u)*dx(v)+dy(u)*dy(v)) + int2d(Th)(f*v) + on(1,2,3,4,grad=0);
+    }
+
+    u = u - eps*grad;
+}
